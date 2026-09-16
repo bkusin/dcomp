@@ -44,7 +44,6 @@ impl WorkerPoolManager {
                     let lock = cloned_clients.read().await;
                     for (client, sender) in lock.iter() {
                         if sender.send(Ok(WorkPayload{payload: payload.to_string()})).is_err() {
-                            // send error, drop the client from the map (deferred)
                             to_drop.push(client.clone());
                             println!("Can't send task to client {}", client);
                             }
@@ -76,11 +75,16 @@ impl WorkerPool for WorkerPoolManager {
 
         let output_stream = UnboundedReceiverStream::new(rx);
 
-        // TODO: Error handling if this stream is dropped
-
         println!("Registered client {}", id);
 
         Ok(Response::new(output_stream)) 
+    }
+
+    async fn complete_work(&self, request: Request<WorkResponse>) -> Result<Response<Empty>, Status> {
+
+        // TODO: Which client?
+        println!("client retuned {}", request.into_inner().result );
+        Ok(Response::new(Empty{}))
     }
 }
 

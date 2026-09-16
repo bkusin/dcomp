@@ -3,6 +3,7 @@ package compute;
 
 service WorkerPool {
 	rpc Register (Empty) returns (stream WorkPayload);
+	rpc CompleteWork (WorkResponse) returns (Empty);
 }
 
 
