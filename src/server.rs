@@ -27,10 +27,9 @@ pub struct WorkerPoolManager {
 
 impl WorkerPoolManager {
      fn assign_work(&self, payload: &str) {
-     //   todo!("not implemented. Divide the work among the clients")
 
         /*
-            in this example, the order of results received is not meaningful so just accumlate them as soon as we get them
+            in this example, the order of results received is not meaningful so just accumulate them as soon as we get them
          */
 
         let cloned_clients = Arc::clone(&self.clients);
@@ -40,11 +39,21 @@ impl WorkerPoolManager {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 {
+                    let mut to_drop = Vec::new();
+                    {
                     let lock = cloned_clients.read().await;
-                    for sender in lock.values() {
+                    for (client, sender) in lock.iter() {
                         if sender.send(Ok(WorkPayload{payload: payload.to_string()})).is_err() {
-                        // TODO if send result is an error, drop the client from the map (will need write lock)
-                        println!("Can't send task to client");
+                            // send error, drop the client from the map (deferred)
+                            to_drop.push(client.clone());
+                            println!("Can't send task to client {}", client);
+                            }
+                        }
+                    }
+                    if to_drop.len() > 0 {
+                        let mut lock = cloned_clients.write().await;
+                        for client in to_drop {
+                            lock.remove(&client);
                         }
                     }
                 }
