@@ -14,23 +14,18 @@ pub mod compute {
     tonic::include_proto!("compute"); 
 }
 
-// type TaskResult = Result<WorkPayload, Status>;
 type TaskSender = UnboundedSender<Result<WorkPayload, Status>>;
-// type ResultStream = Pin<Box<Stream<Item = WorkResult> + Send>>;
 
 #[derive(Debug, Default)]
 pub struct WorkerPoolManager {
     client_id: AtomicU32,
     clients: Arc<RwLock<HashMap<u32, TaskSender>>>,
+    results: RwLock<Vec<u32>>,
 }
 
 
 impl WorkerPoolManager {
      fn assign_work(&self, payload: &str) {
-
-        /*
-            in this example, the order of results received is not meaningful so just accumulate them as soon as we get them
-         */
 
         let cloned_clients = Arc::clone(&self.clients);
         let payload = Arc::<str>::from(payload);
@@ -83,7 +78,25 @@ impl WorkerPool for WorkerPoolManager {
     async fn complete_work(&self, request: Request<WorkResponse>) -> Result<Response<Empty>, Status> {
 
         // TODO: Which client?
-        println!("client retuned {}", request.into_inner().result );
+        let result = request.into_inner().result;
+        println!("client returned {}", result);
+
+        // store the result
+        // for more complex result handling, put in a spawned non-awaited task
+        {
+            let mut write_guard = self.results.write().await;
+            write_guard.push(result);
+
+            if write_guard.len() == 3 {
+                let sum: u32 = write_guard.iter().sum();
+                println!("Job result is {sum}");
+
+                // reset for next job results
+                write_guard.clear();
+            }
+        }
+
+        // ACK
         Ok(Response::new(Empty{}))
     }
 }
