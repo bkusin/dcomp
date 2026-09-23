@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
-use std::sync:: Arc;
+use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::pin::Pin;
 
@@ -20,7 +20,7 @@ type TaskSender = UnboundedSender<Result<WorkPayload, Status>>;
 pub struct WorkerPoolManager {
     client_id: AtomicU32,
     clients: Arc<RwLock<HashMap<u32, TaskSender>>>,
-    results: RwLock<Vec<u32>>,
+    results: Mutex<Vec<u32>>,
 }
 
 
@@ -56,15 +56,15 @@ impl WorkerPoolManager {
     }
 
     async fn collect_results(&self, result: u32) {
-            let mut write_guard = self.results.write().await;
-            write_guard.push(result);
+            let mut lock = self.results.lock().unwrap();
+            lock.push(result);
 
-            if write_guard.len() == 3 {
-                let sum: u32 = write_guard.iter().sum();
+            if lock.len() == 3 {
+                let sum: u32 = lock.iter().sum();
                 println!("Job result is {sum}");
 
                 // reset for next job results
-                write_guard.clear();
+                lock.clear();
             }
         }
 
