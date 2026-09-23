@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
+use std::vec::Splice;
 
 use tonic::{transport::Server, Request, Response, Status};
 use tokio::sync::{mpsc::*, RwLock};
@@ -25,30 +26,49 @@ pub struct WorkerPoolManager {
 
 
 impl WorkerPoolManager {
-     fn assign_work(&self, payload: &str) {
+      fn assign_work(&self, payload: String) {
 
         let cloned_clients = Arc::clone(&self.clients);
-        let payload = Arc::<str>::from(payload);
+        let payload_chars: Vec<char> = payload.chars().collect();
+        let chunk_size = payload_chars.len().div_ceil(4).max(1);
+        let mut payloads: VecDeque<String> = payload_chars
+            .chunks(chunk_size)
+            .map(|chunk| chunk.iter().collect())
+            .collect();
+        
+
 
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                let Some(payload) = payloads.pop_front() else {
+                    break;
+                };
+
                 {
                     let mut to_drop = Vec::new();
+                    let mut send_failed = false;
+
                     {
-                    let lock = cloned_clients.read().await;
-                    for (client, sender) in lock.iter() {
-                        if sender.send(Ok(WorkPayload{payload: payload.to_string()})).is_err() {
-                            to_drop.push(client.clone());
-                            println!("Can't send task to client {}", client);
+                        let lock = cloned_clients.read().await;
+                        for (client, sender) in lock.iter() {
+                            if sender.send(Ok(WorkPayload{payload: payload.clone()})).is_err() {
+                                to_drop.push(client.clone());
+                                send_failed = true;
+                                println!("Can't send task to client {}", client);
                             }
                         }
                     }
+
                     if to_drop.len() > 0 {
                         let mut lock = cloned_clients.write().await;
                         for client in to_drop {
                             lock.remove(&client);
                         }
+                    }
+
+                    if send_failed {
+                        payloads.push_back(payload);
                     }
                 }
             }
@@ -108,7 +128,7 @@ impl WorkerPool for WorkerPoolManager {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:3000".parse()?;
     let manager = WorkerPoolManager::default();
-    manager.assign_work("This is a test!");
+    manager.assign_work("This is a test!".to_owned());
 
     Server::builder()
         .add_service(WorkerPoolServer::new(manager))
