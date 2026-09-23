@@ -54,6 +54,20 @@ impl WorkerPoolManager {
             }
         });
     }
+
+    async fn collect_results(&self, result: u32) {
+            let mut write_guard = self.results.write().await;
+            write_guard.push(result);
+
+            if write_guard.len() == 3 {
+                let sum: u32 = write_guard.iter().sum();
+                println!("Job result is {sum}");
+
+                // reset for next job results
+                write_guard.clear();
+            }
+        }
+
 }
 
 #[tonic::async_trait]
@@ -75,26 +89,15 @@ impl WorkerPool for WorkerPoolManager {
         Ok(Response::new(output_stream)) 
     }
 
+    
     async fn complete_work(&self, request: Request<WorkResponse>) -> Result<Response<Empty>, Status> {
 
-        // TODO: Which client?
+        // TODO: Which client? Which task?
         let result = request.into_inner().result;
         println!("client returned {}", result);
 
         // store the result
-        // for more complex result handling, put in a spawned non-awaited task
-        {
-            let mut write_guard = self.results.write().await;
-            write_guard.push(result);
-
-            if write_guard.len() == 3 {
-                let sum: u32 = write_guard.iter().sum();
-                println!("Job result is {sum}");
-
-                // reset for next job results
-                write_guard.clear();
-            }
-        }
+        self.collect_results(result).await;
 
         // ACK
         Ok(Response::new(Empty{}))
