@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::pin::Pin;
 use std::vec::Splice;
 
@@ -20,13 +20,16 @@ type TaskSender = UnboundedSender<Result<WorkPayload, Status>>;
 #[derive(Debug, Default)]
 pub struct WorkerPoolManager {
     client_id: AtomicU32,
-    clients: Arc<RwLock<HashMap<u32, TaskSender>>>,
+    clients: Arc<RwLock<HashMap<u32, TaskSender>>>, // TODO: Do we need the Arc?
+    in_flight: Mutex<HashSet<u32>>,
     results: Mutex<Vec<u32>>,
 }
 
 
 impl WorkerPoolManager {
       fn assign_work(&self, payload: String) {
+
+        let payload_id: AtomicU32 = 0.into();
 
         let cloned_clients = Arc::clone(&self.clients);
         let payload_chars: Vec<char> = payload.chars().collect();
@@ -42,23 +45,36 @@ impl WorkerPoolManager {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 let Some(payload) = payloads.pop_front() else {
-                    break;
-                };
+                    
+                    let lock = self.in_flight.lock().unwrap();
+                    if lock.is_empty() {
+                        // no queued jobs and no jobs in flight - we're done
+                        break;
+                    }
+                    else {
+                        continue;
+                    }
+                }
 
-                {
+                
                     let mut to_drop = Vec::new();
                     let mut send_failed = false;
 
                     {
                         let lock = cloned_clients.read().await;
-                        
+
                         for (client, sender) in lock.iter() {
-                            if sender.send(Ok(WorkPayload{payload: payload.clone()})).is_err() {
+                            let id = payload_id.fetch_add(1, Relaxed);
+                            if sender.send(Ok(WorkPayload{id: id, payload: payload.clone()})).is_err() {
                                 to_drop.push(client.clone());
                                 send_failed = true;
                                 println!("Can't send task to client {}", client);
+                                // don't need to "roll back" the payload ID since it wasn't sent anyway
                             }
                             else {
+                                // TODO store the ID of the in-flight job
+                                let mut in_flight_lock = self.in_flight.lock().unwrap();
+                                in_flight_lock.insert(id);
                                 break;
                             }
                         }
@@ -75,15 +91,23 @@ impl WorkerPoolManager {
                     if send_failed {
                         payloads.push_back(payload);
                     }
-                }
+                
             }
         });
     }
 
-    async fn collect_results(&self, result: u32) {
-            let mut lock = self.results.lock().unwrap();
-            lock.push(result);
+    async fn collect_results(&self, id: u32, result: u32) {
+            {
+                let mut lock = self.results.lock().unwrap();
+                lock.push(result);
+            }
 
+            {
+                let mut lock = self.in_flight.lock().unwrap();
+                lock.remove(&id);
+            }
+
+            /*
             if lock.len() == 3 {
                 let sum: u32 = lock.iter().sum();
                 println!("Job result is {sum}");
@@ -91,6 +115,7 @@ impl WorkerPoolManager {
                 // reset for next job results
                 lock.clear();
             }
+            */
         }
 
 }
@@ -118,11 +143,11 @@ impl WorkerPool for WorkerPoolManager {
     async fn complete_work(&self, request: Request<WorkResponse>) -> Result<Response<Empty>, Status> {
 
         // TODO: Which client? Which task?
-        let result = request.into_inner().result;
-        println!("client returned {}", result);
+        let response = request.into_inner();
+        println!("client returned {}", response.result);
 
         // store the result
-        self.collect_results(result).await;
+        self.collect_results(response.id, response.result).await;
 
         // ACK
         Ok(Response::new(Empty{}))

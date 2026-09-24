@@ -6,8 +6,8 @@ pub mod compute {
 }
 
 // NOT async; client only does one task at a time for now
-fn do_work(payload: &str) -> WorkResponse {
-    WorkResponse { result: payload.chars().fold( 0, |acc, c| if c.to_ascii_lowercase() == 't' {acc + 1} else {acc}) }
+fn do_work(id: u32, payload: &str) -> WorkResponse {
+    WorkResponse { id: id, result: payload.chars().fold( 0, |acc, c| if c.to_ascii_lowercase() == 't' {acc + 1} else {acc}) }
 }
 
 #[tokio::main]
@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         while let Some(msg) = stream.message().await? {
             println!("{}", msg.payload);
-            let _ = client.complete_work(do_work(&msg.payload)).await?;
+            let _ = client.complete_work(do_work(msg.id, &msg.payload)).await?;
         }
     }
 
