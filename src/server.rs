@@ -51,13 +51,18 @@ impl WorkerPoolManager {
 
                     {
                         let lock = cloned_clients.read().await;
+                        
                         for (client, sender) in lock.iter() {
                             if sender.send(Ok(WorkPayload{payload: payload.clone()})).is_err() {
                                 to_drop.push(client.clone());
                                 send_failed = true;
                                 println!("Can't send task to client {}", client);
                             }
+                            else {
+                                break;
+                            }
                         }
+                        
                     }
 
                     if to_drop.len() > 0 {
