@@ -65,9 +65,6 @@ impl WorkerPoolManager {
                     {
                         let lock = cloned_clients.read().await;
 
-                        // TODO: This will give a task to the first available client, and since the channel is unbounded, 
-                        // this will give everything to the first client.
-                        // Instead, we want to distribute the payloads to all clients.
                         for (client, sender) in lock.iter() {
                             let id = payload_id.fetch_add(1, Relaxed);
                             if payloads.front().is_none() { break; }
