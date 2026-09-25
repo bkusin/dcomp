@@ -31,11 +31,13 @@ impl WorkerPoolManager {
 
         let cloned_clients = Arc::clone(&self.clients);
         let cloned_in_flight = Arc::clone(&self.in_flight);
+
+        // split the original job
         let payload_chars: Vec<char> = payload.chars().collect();
         let chunk_size = payload_chars.len().div_ceil(4).max(1);
-        let mut payloads: VecDeque<String> = payload_chars
+        let mut payloads: VecDeque<(u32, String)> = payload_chars
             .chunks(chunk_size)
-            .map(|chunk| chunk.iter().collect())
+            .map(|chunk| (payload_id.fetch_add(1, Relaxed), chunk.iter().collect()))
             .collect();
 
         tokio::spawn(async move {
@@ -66,19 +68,22 @@ impl WorkerPoolManager {
                         let lock = cloned_clients.read().await;
 
                         for (client, sender) in lock.iter() {
-                            let id = payload_id.fetch_add(1, Relaxed);
+                         //   let id = payload_id.fetch_add(1, Relaxed);
                             if payloads.front().is_none() { break; }
+                            let payload = payloads.front().unwrap();
 
-                            if sender.send(Ok(WorkPayload{id: id, payload: payloads.front().unwrap().to_owned()})).is_err() {
+                            if sender.send(Ok(WorkPayload{id: payload.0, payload: payload.1.clone()})).is_err() {
                                 to_drop.push(client.clone());
                                 
                                 println!("Can't send task to client {}", client);
                             }
                             else {
-                                payloads.pop_front();
                                 // store the ID of the in-flight job
                                 let mut in_flight_lock = cloned_in_flight.lock().unwrap();
-                                in_flight_lock.insert(id);
+                                in_flight_lock.insert(payload.0);
+
+                                payloads.pop_front();
+
                             }
                         }
                         
