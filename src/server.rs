@@ -73,7 +73,6 @@ impl WorkerPoolManager {
                                 to_drop.push(client.clone());
                                 
                                 println!("Can't send task to client {}", client);
-                                // don't need to "roll back" the payload ID since it wasn't sent anyway
                             }
                             else {
                                 payloads.pop_front();
