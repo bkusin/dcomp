@@ -40,15 +40,14 @@ impl WorkerPoolManager {
 
         tokio::spawn(async move {
             loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
                 {
                     let lock = cloned_clients.read().await;
                     if lock.is_empty() { continue; } // no clients to take a job
                 }
 
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                let Some(payload) = payloads.pop_front() else {
-                    
+                if payloads.is_empty() {
                     let lock = cloned_in_flight.lock().unwrap();
                     if lock.is_empty() {
                         // no queued jobs and no jobs in flight - we're done
@@ -56,30 +55,34 @@ impl WorkerPoolManager {
                         break;
                     }
                     else {
-                        continue;
+                        continue;  // stay active in case we have to reassign an in-flight job, i.e., client down or corrupt result
                     }
                 };
 
                 
                 let mut to_drop = Vec::new();
-                let mut send_failed = false;
 
                     {
                         let lock = cloned_clients.read().await;
 
+                        // TODO: This will give a task to the first available client, and since the channel is unbounded, 
+                        // this will give everything to the first client.
+                        // Instead, we want to distribute the payloads to all clients.
                         for (client, sender) in lock.iter() {
                             let id = payload_id.fetch_add(1, Relaxed);
-                            if sender.send(Ok(WorkPayload{id: id, payload: payload.clone()})).is_err() {
+                            if payloads.front().is_none() { break; }
+
+                            if sender.send(Ok(WorkPayload{id: id, payload: payloads.front().unwrap().to_owned()})).is_err() {
                                 to_drop.push(client.clone());
-                                send_failed = true;
+                                
                                 println!("Can't send task to client {}", client);
                                 // don't need to "roll back" the payload ID since it wasn't sent anyway
                             }
                             else {
+                                payloads.pop_front();
                                 // store the ID of the in-flight job
                                 let mut in_flight_lock = cloned_in_flight.lock().unwrap();
                                 in_flight_lock.insert(id);
-                                break;
                             }
                         }
                         
@@ -90,10 +93,6 @@ impl WorkerPoolManager {
                         for client in to_drop {
                             lock.remove(&client);
                         }
-                    }
-
-                    if send_failed {
-                        payloads.push_back(payload);
                     }
                 
             }
