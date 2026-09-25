@@ -37,17 +37,22 @@ impl WorkerPoolManager {
             .chunks(chunk_size)
             .map(|chunk| chunk.iter().collect())
             .collect();
-        
-
 
         tokio::spawn(async move {
             loop {
+
+                {
+                    let lock = cloned_clients.read().await;
+                    if lock.is_empty() { continue; } // no clients to take a job
+                }
+
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 let Some(payload) = payloads.pop_front() else {
                     
                     let lock = cloned_in_flight.lock().unwrap();
                     if lock.is_empty() {
                         // no queued jobs and no jobs in flight - we're done
+                        println!("Work queue exhausted");
                         break;
                     }
                     else {
