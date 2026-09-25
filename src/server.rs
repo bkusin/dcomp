@@ -20,7 +20,7 @@ pub struct WorkerPoolManager {
     client_id: AtomicU32,
     clients: Arc<RwLock<HashMap<u32, TaskSender>>>,
     in_flight: Arc<Mutex<HashSet<u32>>>,
-    results: Mutex<Vec<u32>>,   // doesn't need Arc because it's never moved to async task
+    results: Mutex<HashMap<u32, u32>>,   // doesn't need Arc because it's never moved to async task
 }
 
 
@@ -68,7 +68,6 @@ impl WorkerPoolManager {
                         let lock = cloned_clients.read().await;
 
                         for (client, sender) in lock.iter() {
-                         //   let id = payload_id.fetch_add(1, Relaxed);
                             if payloads.front().is_none() { break; }
                             let payload = payloads.front().unwrap();
 
@@ -86,7 +85,6 @@ impl WorkerPoolManager {
 
                             }
                         }
-                        
                     }
 
                     if to_drop.len() > 0 {
@@ -95,13 +93,12 @@ impl WorkerPoolManager {
                             lock.remove(&client);
                         }
                     }
-                
             }
         });
     }
 
     fn collect_results(&self, id: u32, result: u32) {
-            self.results.lock().unwrap().push(result);    
+            self.results.lock().unwrap().insert(id, result);    
             self.in_flight.lock().unwrap().remove(&id);
         }
 
