@@ -20,7 +20,7 @@ pub struct WorkerPoolManager {
     client_id: AtomicU32,
     clients: Arc<RwLock<HashMap<u32, TaskSender>>>,
     in_flight: Arc<Mutex<HashSet<u32>>>,
-    results: Mutex<Vec<u32>>,
+    results: Mutex<Vec<u32>>,   // doesn't need Arc because it's never moved to async task
 }
 
 
@@ -61,8 +61,8 @@ impl WorkerPoolManager {
                 };
 
                 
-                    let mut to_drop = Vec::new();
-                    let mut send_failed = false;
+                let mut to_drop = Vec::new();
+                let mut send_failed = false;
 
                     {
                         let lock = cloned_clients.read().await;
@@ -100,26 +100,9 @@ impl WorkerPoolManager {
         });
     }
 
-    async fn collect_results(&self, id: u32, result: u32) {
-            {
-                let mut lock = self.results.lock().unwrap();
-                lock.push(result);
-            }
-
-            {
-                let mut lock = self.in_flight.lock().unwrap();
-                lock.remove(&id);
-            }
-
-            /*
-            if lock.len() == 3 {
-                let sum: u32 = lock.iter().sum();
-                println!("Job result is {sum}");
-
-                // reset for next job results
-                lock.clear();
-            }
-            */
+    fn collect_results(&self, id: u32, result: u32) {
+            self.results.lock().unwrap().push(result);    
+            self.in_flight.lock().unwrap().remove(&id);
         }
 
 }
@@ -146,12 +129,12 @@ impl WorkerPool for WorkerPoolManager {
     
     async fn complete_work(&self, request: Request<WorkResponse>) -> Result<Response<Empty>, Status> {
 
-        // TODO: Which client? Which task?
+        // TODO: We don't really care which client returns the job, but it might be nice to know anyway
         let response = request.into_inner();
-        println!("client returned {}", response.result);
+        println!("client returned task id {} result {}", response.id, response.result);
 
         // store the result
-        self.collect_results(response.id, response.result).await;
+        self.collect_results(response.id, response.result);
 
         // ACK
         Ok(Response::new(Empty{}))
