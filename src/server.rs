@@ -1,8 +1,6 @@
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::pin::Pin;
-use std::vec::Splice;
 
 use tonic::{transport::Server, Request, Response, Status};
 use tokio::sync::{mpsc::*, RwLock};
@@ -20,8 +18,8 @@ type TaskSender = UnboundedSender<Result<WorkPayload, Status>>;
 #[derive(Debug, Default)]
 pub struct WorkerPoolManager {
     client_id: AtomicU32,
-    clients: Arc<RwLock<HashMap<u32, TaskSender>>>, // TODO: Do we need the Arc?
-    in_flight: Mutex<HashSet<u32>>,
+    clients: Arc<RwLock<HashMap<u32, TaskSender>>>,
+    in_flight: Arc<Mutex<HashSet<u32>>>,
     results: Mutex<Vec<u32>>,
 }
 
@@ -32,6 +30,7 @@ impl WorkerPoolManager {
         let payload_id: AtomicU32 = 0.into();
 
         let cloned_clients = Arc::clone(&self.clients);
+        let cloned_in_flight = Arc::clone(&self.in_flight);
         let payload_chars: Vec<char> = payload.chars().collect();
         let chunk_size = payload_chars.len().div_ceil(4).max(1);
         let mut payloads: VecDeque<String> = payload_chars
@@ -46,7 +45,7 @@ impl WorkerPoolManager {
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 let Some(payload) = payloads.pop_front() else {
                     
-                    let lock = self.in_flight.lock().unwrap();
+                    let lock = cloned_in_flight.lock().unwrap();
                     if lock.is_empty() {
                         // no queued jobs and no jobs in flight - we're done
                         break;
@@ -54,7 +53,7 @@ impl WorkerPoolManager {
                     else {
                         continue;
                     }
-                }
+                };
 
                 
                     let mut to_drop = Vec::new();
@@ -72,8 +71,8 @@ impl WorkerPoolManager {
                                 // don't need to "roll back" the payload ID since it wasn't sent anyway
                             }
                             else {
-                                // TODO store the ID of the in-flight job
-                                let mut in_flight_lock = self.in_flight.lock().unwrap();
+                                // store the ID of the in-flight job
+                                let mut in_flight_lock = cloned_in_flight.lock().unwrap();
                                 in_flight_lock.insert(id);
                                 break;
                             }
