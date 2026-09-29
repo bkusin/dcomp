@@ -45,26 +45,6 @@ impl WorkerPoolManager {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
-                {
-                    let lock = cloned_clients.read().await;
-                    if lock.is_empty() {
-                        // no clients to take a job
-                        println!("No clients available");
-                        continue; } 
-                }
-
-                if queue.is_empty() {
-                    let lock = cloned_in_flight.lock().unwrap();
-                    if lock.is_empty() {
-                        // no queued jobs and no jobs in flight - we're done
-                        println!("Work queue exhausted");
-                        break;
-                    }
-                    else {
-                        continue;  // stay active in case we have to reassign an in-flight job, i.e., client down or corrupt result
-                    }
-                };
-
                 let mut connections_to_drop: Vec<u32> = Vec::new();
                 
                 // Check in-flight jobs. If any job's entire client list is unreachable, put it back on the queue
@@ -72,14 +52,14 @@ impl WorkerPoolManager {
                 {
                     let clients_lock = cloned_clients.read().await;
                     let mut in_flight_lock = cloned_in_flight.lock().unwrap();
-                    let mut assigned_clients_to_drop: Vec<u32> = Vec::new();
                     let mut in_flight_to_drop: Vec<u32> = Vec::new();
                     
 
                     for (id, client_set) in in_flight_lock.iter_mut() {
                         let mut num_closed = 0;
+                        let mut assigned_clients_to_drop: Vec<u32> = Vec::new();
                         for client in client_set.iter() {
-                            if clients_lock.get(client).unwrap().is_closed() {
+                            if clients_lock.get(client).map_or(true, |sender| sender.is_closed()) {
                                 num_closed += 1;
                                 assigned_clients_to_drop.push(*client);     // remove client from in-flight job's client list
                                 connections_to_drop.push(*client);          // remove the client itself from server's connections
@@ -94,7 +74,7 @@ impl WorkerPoolManager {
                         }
 
                         for client in &assigned_clients_to_drop {
-                            client_set.remove(&client);
+                            client_set.remove(client);
                         }
                     }
 
@@ -102,6 +82,28 @@ impl WorkerPoolManager {
                         in_flight_lock.remove(&task_id);
                     }
 
+                }
+
+                // Drop broken connections before deciding whether there is any work left.
+                if !connections_to_drop.is_empty() {
+                    let mut lock = cloned_clients.write().await;
+                    for client in connections_to_drop.drain(..) {
+                        lock.remove(&client);
+                    }
+                }
+
+                if queue.is_empty() {
+                    let lock = cloned_in_flight.lock().unwrap();
+                    if lock.is_empty() {
+                        println!("Work queue exhausted");
+                        break;
+                    }
+                    continue;
+                }
+
+                if cloned_clients.read().await.is_empty() {
+                    println!("No clients available");
+                    continue;
                 }
                 
 
@@ -133,13 +135,13 @@ impl WorkerPoolManager {
                         }
                     }
 
-                    // drop broken client connections
-                    if connections_to_drop.len() > 0 {
+                    if !connections_to_drop.is_empty() {
                         let mut lock = cloned_clients.write().await;
-                        for client in connections_to_drop {
-                            lock.remove(&client);
+                        for client in &connections_to_drop {
+                            lock.remove(client);
                         }
                     }
+
             }
         });
     }
