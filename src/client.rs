@@ -7,6 +7,9 @@ pub mod compute {
 
 // NOT async; client only does one task at a time for now
 fn do_work(id: u32, payload: &str) -> WorkResponse {
+    // simulate a lot of work
+    std::thread::sleep(std::time::Duration::from_secs(8));
+
     WorkResponse { id: id, result: payload.chars().fold( 0, |acc, c| if c.to_ascii_lowercase() == 't' {acc + 1} else {acc}) }
 }
 

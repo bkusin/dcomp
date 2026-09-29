@@ -47,7 +47,10 @@ impl WorkerPoolManager {
 
                 {
                     let lock = cloned_clients.read().await;
-                    if lock.is_empty() { continue; } // no clients to take a job
+                    if lock.is_empty() {
+                        // no clients to take a job
+                        println!("No clients available");
+                        continue; } 
                 }
 
                 if queue.is_empty() {
@@ -62,28 +65,43 @@ impl WorkerPoolManager {
                     }
                 };
 
-                let mut to_drop: Vec<u32> = Vec::new();
+                let mut connections_to_drop: Vec<u32> = Vec::new();
                 
                 // Check in-flight jobs. If any job's entire client list is unreachable, put it back on the queue
                 // TODO: use keepalive to automatically close dead connections
                 {
                     let clients_lock = cloned_clients.read().await;
-                    let in_flight_lock = cloned_in_flight.lock().unwrap();
+                    let mut in_flight_lock = cloned_in_flight.lock().unwrap();
+                    let mut assigned_clients_to_drop: Vec<u32> = Vec::new();
+                    let mut in_flight_to_drop: Vec<u32> = Vec::new();
                     
 
-                    for (id, client_set) in in_flight_lock.iter() {
+                    for (id, client_set) in in_flight_lock.iter_mut() {
                         let mut num_closed = 0;
-                        for client in client_set {
+                        for client in client_set.iter() {
                             if clients_lock.get(client).unwrap().is_closed() {
                                 num_closed += 1;
-                                to_drop.push(*client);
+                                assigned_clients_to_drop.push(*client);     // remove client from in-flight job's client list
+                                connections_to_drop.push(*client);          // remove the client itself from server's connections
+
+                                println!("Can't reach busy client {} processing job {}", client, id);
                             }
                         }
 
-                        if num_closed == client_set.len() {
+                         if num_closed == client_set.len() {
                             queue.push_back(*id);
+                            in_flight_to_drop.push(*id);
+                        }
+
+                        for client in &assigned_clients_to_drop {
+                            client_set.remove(&client);
                         }
                     }
+
+                    for task_id in in_flight_to_drop {
+                        in_flight_lock.remove(&task_id);
+                    }
+
                 }
                 
 
@@ -95,7 +113,7 @@ impl WorkerPoolManager {
                             let payload = queue.front().unwrap();
 
                             if sender.send(Ok(WorkPayload{id: *payload, payload: payloads.get(payload).unwrap().clone()})).is_err() {
-                                to_drop.push(*client);
+                                connections_to_drop.push(*client);
                                 
                                 println!("Can't send task to client {}", client);
                             }
@@ -115,9 +133,10 @@ impl WorkerPoolManager {
                         }
                     }
 
-                    if to_drop.len() > 0 {
+                    // drop broken client connections
+                    if connections_to_drop.len() > 0 {
                         let mut lock = cloned_clients.write().await;
-                        for client in to_drop {
+                        for client in connections_to_drop {
                             lock.remove(&client);
                         }
                     }
