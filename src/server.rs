@@ -19,8 +19,8 @@ type TaskSender = UnboundedSender<Result<WorkPayload, Status>>;
 pub struct WorkerPoolManager {
     client_id: AtomicU32,
     clients: Arc<RwLock<HashMap<u32, TaskSender>>>,
-    in_flight: Arc<Mutex<HashSet<u32>>>,
-    results: Mutex<HashMap<u32, u32>>,   // doesn't need Arc because it's never moved to async task
+    in_flight: Arc<Mutex<HashMap<u32, HashSet<u32>>>>,  // job -> assigned clients
+    results: Mutex<HashMap<u32, u32>>,                  // doesn't need Arc because it's never moved to async task
 }
 
 
@@ -35,10 +35,11 @@ impl WorkerPoolManager {
         // split the original job
         let payload_chars: Vec<char> = payload.chars().collect();
         let chunk_size = payload_chars.len().div_ceil(4).max(1);
-        let mut payloads: VecDeque<(u32, String)> = payload_chars
+        let mut payloads: HashMap<u32, String> = payload_chars
             .chunks(chunk_size)
             .map(|chunk| (payload_id.fetch_add(1, Relaxed), chunk.iter().collect()))
             .collect();
+        let mut queue: VecDeque<u32> = payloads.keys().copied().collect();
 
         tokio::spawn(async move {
             loop {
@@ -49,7 +50,7 @@ impl WorkerPoolManager {
                     if lock.is_empty() { continue; } // no clients to take a job
                 }
 
-                if payloads.is_empty() {
+                if queue.is_empty() {
                     let lock = cloned_in_flight.lock().unwrap();
                     if lock.is_empty() {
                         // no queued jobs and no jobs in flight - we're done
@@ -61,27 +62,54 @@ impl WorkerPoolManager {
                     }
                 };
 
+                let mut to_drop: Vec<u32> = Vec::new();
                 
-                let mut to_drop = Vec::new();
+                // Check in-flight jobs. If any job's entire client list is unreachable, put it back on the queue
+                // TODO: use keepalive to automatically close dead connections
+                {
+                    let clients_lock = cloned_clients.read().await;
+                    let in_flight_lock = cloned_in_flight.lock().unwrap();
+                    
+
+                    for (id, client_set) in in_flight_lock.iter() {
+                        let mut num_closed = 0;
+                        for client in client_set {
+                            if clients_lock.get(client).unwrap().is_closed() {
+                                num_closed += 1;
+                                to_drop.push(*client);
+                            }
+                        }
+
+                        if num_closed == client_set.len() {
+                            queue.push_back(*id);
+                        }
+                    }
+                }
+                
 
                     {
-                        let lock = cloned_clients.read().await;
+                        let clients_lock = cloned_clients.read().await;
 
-                        for (client, sender) in lock.iter() {
-                            if payloads.front().is_none() { break; }
-                            let payload = payloads.front().unwrap();
+                        for (client, sender) in clients_lock.iter() {
+                            if queue.front().is_none() { break; }
+                            let payload = queue.front().unwrap();
 
-                            if sender.send(Ok(WorkPayload{id: payload.0, payload: payload.1.clone()})).is_err() {
-                                to_drop.push(client.clone());
+                            if sender.send(Ok(WorkPayload{id: *payload, payload: payloads.get(payload).unwrap().clone()})).is_err() {
+                                to_drop.push(*client);
                                 
                                 println!("Can't send task to client {}", client);
                             }
                             else {
                                 // store the ID of the in-flight job
                                 let mut in_flight_lock = cloned_in_flight.lock().unwrap();
-                                in_flight_lock.insert(payload.0);
+                                if in_flight_lock.contains_key(payload) {
+                                    in_flight_lock.get_mut(payload).unwrap().insert(*client);
+                                }
+                                else { 
+                                    in_flight_lock.insert(*payload, HashSet::from([*client]));
+                                }
 
-                                payloads.pop_front();
+                                queue.pop_front();
 
                             }
                         }
