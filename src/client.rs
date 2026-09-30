@@ -18,9 +18,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut args = std::env::args();
     args.next();
-    let addr_arg = args.next().unwrap_or("http://[::1]:3000".to_owned());
+    let addr_arg = args.next().unwrap_or("http://127.0.0.1:3000".to_owned());
 
-    let mut client = WorkerPoolClient::connect(addr_arg).await?; // "http://[::1]:3000"
+    let mut client = WorkerPoolClient::connect(addr_arg).await?;
 
     let request = tonic::Request::new(Empty {} );
 

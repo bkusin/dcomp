@@ -192,7 +192,7 @@ impl WorkerPool for WorkerPoolManager {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args();
     args.next();
-    let addr_arg = args.next().unwrap_or("[::1]:3000".to_owned());
+    let addr_arg = args.next().unwrap_or("0.0.0.0:3000".to_owned());
     let addr: SocketAddr = addr_arg.parse().unwrap();
     let manager = WorkerPoolManager::default();
     manager.assign_work("This is a test!".to_owned());
