@@ -1,3 +1,4 @@
+use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -189,7 +190,10 @@ impl WorkerPool for WorkerPoolManager {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "[::1]:3000".parse()?;
+    let mut args = std::env::args();
+    args.next();
+    let addr_arg = args.next().unwrap_or("[::1]:3000".to_owned());
+    let addr: SocketAddr = addr_arg.parse().unwrap();
     let manager = WorkerPoolManager::default();
     manager.assign_work("This is a test!".to_owned());
 
