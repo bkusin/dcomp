@@ -8,7 +8,7 @@ use tokio::sync::{mpsc::*, RwLock};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use compute::worker_pool_server::{WorkerPool, WorkerPoolServer};
-use compute::{Empty, WorkPayload, WorkResponse};
+use compute::{Empty, WorkerId, WorkPayload, WorkResponse};
 
 pub mod compute {
     tonic::include_proto!("compute"); 
@@ -49,7 +49,17 @@ impl WorkerPoolManager {
                 let mut connections_to_drop: Vec<u32> = Vec::new();
                 
                 // Check in-flight jobs. If any job's entire client list is unreachable, put it back on the queue
-                // TODO: use keepalive to automatically close dead connections
+
+                // TODO: Task lease. Each in flight task has a last-update time for each client processing it. 
+                // change the client set to a set of (client, timestamp) tuples.
+                // if the sum of expired leases and dead clients is at least the number of clients, requeue the task.
+                // The client task needs to send a lease renewal (RPC) periodically from the execution context of the task.
+                // To do this, the client needs to know its ID when it requests the lease renewal.
+                // Change the register function to only return a new ID.
+                // Then the client calls a new OpenStream(id) function to make the server create the stream.
+                // This function should be idempotent so if an existing client attempts to reconnect, the server just replaces the old stream.
+                // This also allows us to reconnect, so add reconnect logic to the client.
+                // Add these functions first, then the retry logic, then the task lease.
                 {
                     let clients_lock = cloned_clients.read().await;
                     let mut in_flight_lock = cloned_in_flight.lock().unwrap();
@@ -156,11 +166,21 @@ impl WorkerPoolManager {
 
 #[tonic::async_trait]
 impl WorkerPool for WorkerPoolManager {
-    type RegisterStream = UnboundedReceiverStream<Result<WorkPayload, Status>>;
+    // the function open_stream returns a stream, thus the (generated )expected name for the type is OpenStreamStream
+    type OpenStreamStream = UnboundedReceiverStream<Result<WorkPayload, Status>>;
 
-    async fn register(&self, request: Request<Empty>) -> Result<Response<Self::RegisterStream>, Status> {
+    async fn register(&self, request: Request<Empty>) -> Result<Response<WorkerId>, Status> {
             
         let id = self.client_id.fetch_add(1, Relaxed);
+
+        println!("Registered client {}", id);
+
+        Ok(Response::new(WorkerId{ id: id}))
+    }
+
+    async fn open_stream(&self, request: Request<WorkerId>) -> Result<Response<Self::OpenStreamStream>, Status> {
+            
+        let id = request.into_inner().id;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<WorkPayload, Status>>();
 
         let mut write_guard = self.clients.write().await;
@@ -168,7 +188,7 @@ impl WorkerPool for WorkerPoolManager {
 
         let output_stream = UnboundedReceiverStream::new(rx);
 
-        println!("Registered client {}", id);
+        println!("Opened channel with client {}", id);
 
         Ok(Response::new(output_stream)) 
     }
