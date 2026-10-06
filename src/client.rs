@@ -1,5 +1,5 @@
 use compute::worker_pool_client::WorkerPoolClient;
-use compute::{Empty, WorkResponse};
+use compute::{Empty, WorkerId, WorkResponse};
 
 pub mod compute {
     tonic::include_proto!("compute");
@@ -24,9 +24,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let request = tonic::Request::new(Empty {} );
 
-    let mut stream = client.register(request).await?.into_inner();
+    // mut because it could change if we reconnect
+    let mut id = client.register(request).await?.into_inner().id;
 
-    println!("RESPONSE={:?}", stream);
+    let mut stream = client.open_stream(WorkerId { id: id }).await?.into_inner();
+
+    println!("This is client {}", id);
 
     // process work
     // for now, panic if we can't get work or send a response

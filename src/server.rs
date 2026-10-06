@@ -169,6 +169,7 @@ impl WorkerPool for WorkerPoolManager {
     // the function open_stream returns a stream, thus the (generated )expected name for the type is OpenStreamStream
     type OpenStreamStream = UnboundedReceiverStream<Result<WorkPayload, Status>>;
 
+    // gives the client an ID but doesn't store it.
     async fn register(&self, request: Request<Empty>) -> Result<Response<WorkerId>, Status> {
             
         let id = self.client_id.fetch_add(1, Relaxed);
@@ -178,6 +179,7 @@ impl WorkerPool for WorkerPoolManager {
         Ok(Response::new(WorkerId{ id: id}))
     }
 
+    // client requests to open a channel. Store the client ID and channel.
     async fn open_stream(&self, request: Request<WorkerId>) -> Result<Response<Self::OpenStreamStream>, Status> {
             
         let id = request.into_inner().id;

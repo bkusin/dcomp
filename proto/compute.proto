@@ -2,7 +2,8 @@ syntax = "proto3";
 package compute;
 
 service WorkerPool {
-	rpc Register (Empty) returns (stream WorkPayload);
+	rpc Register (Empty) returns (WorkerId);
+	rpc OpenStream (WorkerId) returns (stream WorkPayload);
 	rpc CompleteWork (WorkResponse) returns (Empty);
 }
 
@@ -15,6 +16,10 @@ message WorkPayload {
 message WorkResponse {
 	uint32 id = 1;
 	uint32 result = 2;
+}
+
+message WorkerId {
+	uint32 id = 1;
 }
 
 message Empty {
