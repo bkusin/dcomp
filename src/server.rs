@@ -125,6 +125,14 @@ impl WorkerPoolManager {
                             if queue.front().is_none() { break; }
                             let payload = queue.front().unwrap();
 
+                            // don't assign a task to a client that is already on it
+                            let in_flight_lock = cloned_in_flight.lock().unwrap();
+                            if let (Some(assigned_list)) = in_flight_lock.get(payload) {
+                                if assigned_list.contains(client) {
+                                    continue;
+                                }
+                            }
+
                             if sender.send(Ok(WorkPayload{id: *payload, payload: payloads.get(payload).unwrap().clone()})).is_err() {
                                 connections_to_drop.push(*client);
                                 
