@@ -2,13 +2,14 @@ use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 use tonic::{transport::Server, Request, Response, Status};
 use tokio::sync::{mpsc::*, RwLock};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use compute::worker_pool_server::{WorkerPool, WorkerPoolServer};
-use compute::{Empty, WorkerId, WorkPayload, WorkResponse};
+use compute::{Empty, WorkerId, WorkPayload, WorkResponse, TaskLease};
 
 pub mod compute {
     tonic::include_proto!("compute"); 
@@ -20,13 +21,14 @@ type TaskSender = UnboundedSender<Result<WorkPayload, Status>>;
 pub struct WorkerPoolManager {
     client_id: AtomicU32,
     clients: Arc<RwLock<HashMap<u32, TaskSender>>>,
-    in_flight: Arc<Mutex<HashMap<u32, HashSet<u32>>>>,  // job -> assigned clients
-    results: Mutex<HashMap<u32, u32>>,                  // doesn't need Arc because it's never moved to async task
+    in_flight: Arc<Mutex<HashMap<u32, HashMap<u32, Instant>>>>,  // job -> <assigned clients, task lease>
+    results: Mutex<HashMap<u32, u32>>,                           // doesn't need Arc because it's never moved to async task
+    timeout: Duration,                                           // task lease timeout in seconds
 }
 
 
 impl WorkerPoolManager {
-      fn assign_work(&self, payload: String) {
+    fn assign_work(&self, payload: String) {
 
         let payload_id: AtomicU32 = 0.into();
 
@@ -51,7 +53,7 @@ impl WorkerPoolManager {
                 // Check in-flight jobs. If any job's entire client list is unreachable, put it back on the queue
 
                 // TODO: Task lease. Each in flight task has a last-update time for each client processing it. 
-                // change the client set to a set of (client, timestamp) tuples.
+                // change the client set to a set of (client, timestamp) tuples, or use a separate list of leases.
                 // if the sum of expired leases and dead clients is at least the number of clients, requeue the task.
                 // The client task needs to send a lease renewal (RPC) periodically from the execution context of the task.
                 // To do this, the client needs to know its ID when it requests the lease renewal.
@@ -66,10 +68,16 @@ impl WorkerPoolManager {
                     let mut in_flight_to_drop: Vec<u32> = Vec::new();
                     
 
-                    for (id, client_set) in in_flight_lock.iter_mut() {
+                    for (id, client_map) in in_flight_lock.iter_mut() {
                         let mut num_closed = 0;
+                        let mut num_late = 0;
                         let mut assigned_clients_to_drop: Vec<u32> = Vec::new();
-                        for client in client_set.iter() {
+                        for (client, timestamp) in client_map.iter() {
+
+                            if Instant::now().duration_since(*timestamp) > self.timeout {
+                                num_late += 1;
+                            }
+
                             if clients_lock.get(client).map_or(true, |sender| sender.is_closed()) {
                                 num_closed += 1;
                                 assigned_clients_to_drop.push(*client);     // remove client from in-flight job's client list
@@ -79,13 +87,14 @@ impl WorkerPoolManager {
                             }
                         }
 
-                         if num_closed == client_set.len() {
+                        // if all assigned clients are stuck or dead, requeue the task
+                        if num_late + num_closed == client_map.len() {
                             queue.push_back(*id);
                             in_flight_to_drop.push(*id);
                         }
 
                         for client in &assigned_clients_to_drop {
-                            client_set.remove(client);
+                            client_map.remove(client);
                         }
                     }
 
@@ -95,7 +104,7 @@ impl WorkerPoolManager {
 
                 }
 
-                // Drop broken connections before deciding whether there is any work left.
+                // Drop broken connections before deciding if there is any work left.
                 if !connections_to_drop.is_empty() {
                     let mut lock = cloned_clients.write().await;
                     for client in connections_to_drop.drain(..) {
@@ -117,18 +126,19 @@ impl WorkerPoolManager {
                     continue;
                 }
                 
-
+                    // task assignment
                     {
                         let clients_lock = cloned_clients.read().await;
 
                         for (client, sender) in clients_lock.iter() {
                             if queue.front().is_none() { break; }
+
                             let payload = queue.front().unwrap();
 
                             // don't assign a task to a client that is already on it
                             let in_flight_lock = cloned_in_flight.lock().unwrap();
                             if let (Some(assigned_list)) = in_flight_lock.get(payload) {
-                                if assigned_list.contains(client) {
+                                if assigned_list.contains_key(client) {
                                     continue;
                                 }
                             }
@@ -139,13 +149,13 @@ impl WorkerPoolManager {
                                 println!("Can't send task to client {}", client);
                             }
                             else {
-                                // store the ID of the in-flight job
+                                // store the ID of the in-flight job and its assigned client
                                 let mut in_flight_lock = cloned_in_flight.lock().unwrap();
                                 if in_flight_lock.contains_key(payload) {
-                                    in_flight_lock.get_mut(payload).unwrap().insert(*client);
+                                    in_flight_lock.get_mut(payload).unwrap().insert(*client, Instant::now());
                                 }
                                 else { 
-                                    in_flight_lock.insert(*payload, HashSet::from([*client]));
+                                    in_flight_lock.insert(*payload, HashMap::from([(*client, Instant::now())]));
                                 }
 
                                 queue.pop_front();
@@ -170,11 +180,15 @@ impl WorkerPoolManager {
             self.in_flight.lock().unwrap().remove(&id);
         }
 
+    fn set_timeout(&mut self, duration: Duration) {
+        self.timeout = duration;
+    }
+
 }
 
 #[tonic::async_trait]
 impl WorkerPool for WorkerPoolManager {
-    // the function open_stream returns a stream, thus the (generated )expected name for the type is OpenStreamStream
+    // the function open_stream returns a stream, thus the (generated) expected name for the type is OpenStreamStream
     type OpenStreamStream = UnboundedReceiverStream<Result<WorkPayload, Status>>;
 
     // gives the client an ID but doesn't store it.
@@ -203,15 +217,30 @@ impl WorkerPool for WorkerPoolManager {
         Ok(Response::new(output_stream)) 
     }
 
-    
+
+    // TODO
+    async fn renew_lease(&self, request: Request<TaskLease>) -> Result<Response<Empty>, Status> {
+        // TODO: Change client set to map of (client, last_update) tuples, or use a separate lease list
+
+        let mut in_flight_lock = self.in_flight.lock().unwrap();
+        let lease_msg = request.into_inner();
+
+        // ignore attempted leases on tasks that are not in flight
+        if let Some(lease) = in_flight_lock.get_mut(&lease_msg.task_id) {
+            lease.insert(lease_msg.client_id, Instant::now());
+        };
+
+        Ok(Response::new(Empty{}))
+    }
+
     async fn complete_work(&self, request: Request<WorkResponse>) -> Result<Response<Empty>, Status> {
 
         // TODO: We don't really care which client returns the job, but it might be nice to know anyway
         let response = request.into_inner();
-        println!("client returned task id {} result {}", response.id, response.result);
+        println!("client returned task id {} result {}", response.task_id, response.result);
 
         // store the result
-        self.collect_results(response.id, response.result);
+        self.collect_results(response.task_id, response.result);
 
         // ACK
         Ok(Response::new(Empty{}))
@@ -224,7 +253,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     args.next();
     let addr_arg = args.next().unwrap_or("0.0.0.0:3000".to_owned());
     let addr: SocketAddr = addr_arg.parse().unwrap();
-    let manager = WorkerPoolManager::default();
+    let mut manager = WorkerPoolManager::default();
+    manager.set_timeout(Duration::from_secs(10));
     manager.assign_work("This is a test!".to_owned());
 
     Server::builder()

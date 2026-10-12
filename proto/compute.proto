@@ -4,6 +4,7 @@ package compute;
 service WorkerPool {
 	rpc Register (Empty) returns (WorkerId);
 	rpc OpenStream (WorkerId) returns (stream WorkPayload);
+	rpc RenewLease (TaskLease) returns (Empty);
 	rpc CompleteWork (WorkResponse) returns (Empty);
 }
 
@@ -14,12 +15,18 @@ message WorkPayload {
 }
 
 message WorkResponse {
-	uint32 id = 1;
-	uint32 result = 2;
+	uint32 client_id = 1;
+	uint32 task_id = 2;
+	uint32 result = 3;
 }
 
 message WorkerId {
 	uint32 id = 1;
+}
+
+message TaskLease {
+	uint32 client_id = 1;
+	uint32 task_id = 2;
 }
 
 message Empty {
