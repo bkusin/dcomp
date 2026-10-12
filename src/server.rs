@@ -34,6 +34,7 @@ impl WorkerPoolManager {
 
         let cloned_clients = Arc::clone(&self.clients);
         let cloned_in_flight = Arc::clone(&self.in_flight);
+        let timeout = self.timeout;
 
         // split the original job
         let payload_chars: Vec<char> = payload.chars().collect();
@@ -74,7 +75,7 @@ impl WorkerPoolManager {
                         let mut assigned_clients_to_drop: Vec<u32> = Vec::new();
                         for (client, timestamp) in client_map.iter() {
 
-                            if Instant::now().duration_since(*timestamp) > self.timeout {
+                            if Instant::now().duration_since(*timestamp) > timeout {
                                 num_late += 1;
                             }
 
