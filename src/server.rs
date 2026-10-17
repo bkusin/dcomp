@@ -51,18 +51,8 @@ impl WorkerPoolManager {
 
                 let mut connections_to_drop: Vec<u32> = Vec::new();
                 
-                // Check in-flight jobs. If any job's entire client list is unreachable, put it back on the queue
-
-                // TODO: Task lease. Each in flight task has a last-update time for each client processing it. 
-                // change the client set to a set of (client, timestamp) tuples, or use a separate list of leases.
-                // if the sum of expired leases and dead clients is at least the number of clients, requeue the task.
-                // The client task needs to send a lease renewal (RPC) periodically from the execution context of the task.
-                // To do this, the client needs to know its ID when it requests the lease renewal.
-                // Change the register function to only return a new ID.
-                // Then the client calls a new OpenStream(id) function to make the server create the stream.
-                // This function should be idempotent so if an existing client attempts to reconnect, the server just replaces the old stream.
-                // This also allows us to reconnect, so add reconnect logic to the client.
-                // Add these functions first, then the retry logic, then the task lease.
+                // Check in-flight jobs. 
+                //If any job's entire client list has expired task leases or is unreachable, put the job back on the queue
                 {
                     let clients_lock = cloned_clients.read().await;
                     let mut in_flight_lock = cloned_in_flight.lock().unwrap();
@@ -226,7 +216,7 @@ impl WorkerPool for WorkerPoolManager {
         let mut in_flight_lock = self.in_flight.lock().unwrap();
         let lease_msg = request.into_inner();
 
-        // ignore attempted leases on tasks that are not in flight
+        // renew lease; ignore attempted leases on tasks that are not in flight
         if let Some(lease) = in_flight_lock.get_mut(&lease_msg.task_id) {
             lease.insert(lease_msg.client_id, Instant::now());
         };
