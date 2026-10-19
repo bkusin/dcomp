@@ -82,6 +82,8 @@ impl WorkerPoolManager {
                         if num_late + num_closed == client_map.len() {
                             queue.push_back(*id);
                             in_flight_to_drop.push(*id);
+
+                            println!("Requeuing task {}", id);
                         }
 
                         for client in &assigned_clients_to_drop {
@@ -232,6 +234,8 @@ impl WorkerPool for WorkerPoolManager {
         println!("client returned task id {} result {}", response.task_id, response.result);
 
         // store the result
+        // tasks are idempotent so just unconditionally store results.
+        // if they weren't, then we would need a policy such as First Write Wins
         self.collect_results(response.task_id, response.result);
 
         // ACK
