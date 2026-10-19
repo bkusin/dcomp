@@ -127,8 +127,8 @@ impl WorkerPoolManager {
                             let payload = queue.front().unwrap();
 
                             // don't assign a task to a client that is already on it
-                            let in_flight_lock = cloned_in_flight.lock().unwrap();
-                            if let (Some(assigned_list)) = in_flight_lock.get(payload) {
+                            let mut in_flight_lock = cloned_in_flight.lock().unwrap();
+                            if let Some(assigned_list) = in_flight_lock.get(payload) {
                                 if assigned_list.contains_key(client) {
                                     continue;
                                 }
@@ -141,7 +141,6 @@ impl WorkerPoolManager {
                             }
                             else {
                                 // store the ID of the in-flight job and its assigned client
-                                let mut in_flight_lock = cloned_in_flight.lock().unwrap();
                                 if in_flight_lock.contains_key(payload) {
                                     in_flight_lock.get_mut(payload).unwrap().insert(*client, Instant::now());
                                 }
@@ -149,8 +148,8 @@ impl WorkerPoolManager {
                                     in_flight_lock.insert(*payload, HashMap::from([(*client, Instant::now())]));
                                 }
 
+                                println!("Assigned task {} to client {}", payload, client);
                                 queue.pop_front();
-
                             }
                         }
                     }
@@ -219,6 +218,8 @@ impl WorkerPool for WorkerPoolManager {
         // renew lease; ignore attempted leases on tasks that are not in flight
         if let Some(lease) = in_flight_lock.get_mut(&lease_msg.task_id) {
             lease.insert(lease_msg.client_id, Instant::now());
+
+            println!("Received lease renewal for client {}, task {}", lease_msg.client_id, lease_msg.task_id);
         };
 
         Ok(Response::new(Empty{}))
