@@ -260,3 +260,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn registration_assigns_id() {
+        let manager = WorkerPoolManager::default();
+        let first = manager
+            .register(Request::new(Empty {}))
+            .await
+            .unwrap()
+            .into_inner();
+
+        let second = manager
+            .register(Request::new(Empty {}))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(first.id, 0);
+        assert_eq!(second.id, 1);
+        assert!(manager.clients.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn renewing_lease_resets_timeout() {
+        let mut manager = WorkerPoolManager::default();
+        manager.set_timeout(Duration::from_secs(10));
+
+        let client_id = 3;
+        let task_id = 42;
+        manager.in_flight.lock().unwrap().insert(
+            task_id,
+            HashMap::from([(client_id, Instant::now())]),
+        );
+
+        std::thread::sleep(Duration::from_secs(1));
+        let now = Instant::now();
+
+        manager.renew_lease(Request::new(TaskLease {client_id: client_id, task_id: task_id})).await;
+
+        let binding  = manager.in_flight.lock().unwrap();
+        let time = binding.get(&task_id)
+                                        .unwrap().get(&client_id).unwrap();
+
+        assert!(*time >= now);
+    }
+
+    #[tokio::test]
+    async fn completing_work_stores_result_and_clears_in_flight_task() {
+        let manager = WorkerPoolManager::default();
+        let task_id = 7;
+        manager.in_flight.lock().unwrap().insert(
+            task_id,
+            HashMap::from([(3, Instant::now())]),
+        );
+
+        manager
+            .complete_work(Request::new(WorkResponse {
+                client_id: 3,
+                task_id,
+                result: 12,
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(manager.results.lock().unwrap().get(&task_id), Some(&12));
+        assert!(!manager.in_flight.lock().unwrap().contains_key(&task_id));
+    }
+}
