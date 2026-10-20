@@ -1,3 +1,6 @@
+use dcomp::compute::worker_pool_client::WorkerPoolClient;
+use dcomp::compute::{Empty, WorkerId, WorkResponse};
+
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         while let Some(msg) = stream.message().await? {
             println!("{}", msg.payload);
 
-            let (task_id, result) = do_work(msg.id, &msg.payload, client.clone(), client_id);
+            let (task_id, result) = dcomp::client::do_work(msg.id, &msg.payload, client.clone(), client_id);
             let _ = client.complete_work(WorkResponse {client_id: client_id, task_id: task_id, result: result } ).await?;
         }
     }

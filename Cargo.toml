@@ -5,11 +5,11 @@ edition = "2024"
 
 [[bin]]
 name = "compute-server"
-path = "src/bin/server.rs"
+path = "src/bin/compute-server.rs"
 
 [[bin]]
 name = "compute-client"
-path = "src/bin/client.rs"
+path = "src/bin/compute-client.rs"
 
 [dependencies]
 prost = "0.14.4"

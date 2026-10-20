@@ -1,13 +1,10 @@
-use compute::worker_pool_client::WorkerPoolClient;
-use compute::{Empty, WorkerId, WorkResponse, TaskLease};
 use tonic::transport::Channel;
-/*/
-pub mod compute {
-    tonic::include_proto!("compute");
-}
-*/
+
+use crate::compute::worker_pool_client::WorkerPoolClient;
+use crate::compute::{TaskLease};
+
 // NOT async; client only does one task at a time for now
-fn do_work(id: u32, payload: &str, mut client: WorkerPoolClient<Channel>, client_id: u32) -> (u32, u32) {
+pub fn do_work(id: u32, payload: &str, mut client: WorkerPoolClient<Channel>, client_id: u32) -> (u32, u32) {
     // simulate some work
     std::thread::sleep(std::time::Duration::from_secs(4));
     println!("some work done");

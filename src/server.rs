@@ -1,20 +1,15 @@
-use std::net::{SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use tonic::{transport::Server, Request, Response, Status};
+use tonic::{Request, Response, Status};
 use tokio::sync::{mpsc::*, RwLock};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-use compute::worker_pool_server::{WorkerPool, WorkerPoolServer};
-use compute::{Empty, WorkerId, WorkPayload, WorkResponse, TaskLease};
-/*/
-pub mod compute {
-    tonic::include_proto!("compute"); 
-}
-*/
+use crate::compute::worker_pool_server::WorkerPool;
+use crate::compute::{Empty, WorkerId, WorkPayload, WorkResponse, TaskLease};
+
 type TaskSender = UnboundedSender<Result<WorkPayload, Status>>;
 
 #[derive(Debug, Default)]
@@ -28,7 +23,7 @@ pub struct WorkerPoolManager {
 
 
 impl WorkerPoolManager {
-    fn assign_work(&self, payload: String) {
+    pub fn assign_work(&self, payload: String) {
 
         let payload_id: AtomicU32 = 0.into();
 
@@ -172,7 +167,7 @@ impl WorkerPoolManager {
             self.in_flight.lock().unwrap().remove(&id);
         }
 
-    fn set_timeout(&mut self, duration: Duration) {
+    pub fn set_timeout(&mut self, duration: Duration) {
         self.timeout = duration;
     }
 
