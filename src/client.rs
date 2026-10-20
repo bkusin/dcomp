@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("This is client {}", client_id);
 
     // process work
-    // for now, panic if we can't get work or send a response
+    // for now, just loop if we can't get work. Quit if we can't send a response.
     loop {
         while let Some(msg) = stream.message().await? {
             println!("{}", msg.payload);
