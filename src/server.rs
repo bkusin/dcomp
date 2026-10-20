@@ -1,7 +1,7 @@
-use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
+use std::net::{SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use tonic::{transport::Server, Request, Response, Status};
@@ -39,7 +39,7 @@ impl WorkerPoolManager {
         // split the original job
         let payload_chars: Vec<char> = payload.chars().collect();
         let chunk_size = payload_chars.len().div_ceil(4).max(1);
-        let mut payloads: HashMap<u32, String> = payload_chars
+        let payloads: HashMap<u32, String> = payload_chars
             .chunks(chunk_size)
             .map(|chunk| (payload_id.fetch_add(1, Relaxed), chunk.iter().collect()))
             .collect();
@@ -184,7 +184,7 @@ impl WorkerPool for WorkerPoolManager {
     type OpenStreamStream = UnboundedReceiverStream<Result<WorkPayload, Status>>;
 
     // gives the client an ID but doesn't store it.
-    async fn register(&self, request: Request<Empty>) -> Result<Response<WorkerId>, Status> {
+    async fn register(&self, _request: Request<Empty>) -> Result<Response<WorkerId>, Status> {
             
         let id = self.client_id.fetch_add(1, Relaxed);
 
@@ -300,7 +300,7 @@ mod tests {
         std::thread::sleep(Duration::from_secs(1));
         let now = Instant::now();
 
-        manager.renew_lease(Request::new(TaskLease {client_id: client_id, task_id: task_id})).await;
+        let _ = manager.renew_lease(Request::new(TaskLease {client_id: client_id, task_id: task_id})).await;
 
         let binding  = manager.in_flight.lock().unwrap();
         let time = binding.get(&task_id)

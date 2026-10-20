@@ -36,8 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let request = tonic::Request::new(Empty {} );
 
-    // mut because it could change if we reconnect
-    let mut client_id = client.register(request).await?.into_inner().id;
+    let client_id = client.register(request).await?.into_inner().id;
 
     let mut stream = client.open_stream(WorkerId { id: client_id }).await?.into_inner();
 
