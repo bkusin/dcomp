@@ -64,7 +64,7 @@ impl WorkerPoolManager {
                                 num_late += 1;
                             }
 
-                            if clients_lock.get(client).map_or(true, |sender| sender.is_closed()) {
+                            if clients_lock.get(client).is_none_or(|sender| sender.is_closed()) {
                                 num_closed += 1;
                                 assigned_clients_to_drop.push(*client);     // remove client from in-flight job's client list
                                 connections_to_drop.push(*client);          // remove the client itself from server's connections
@@ -125,11 +125,10 @@ impl WorkerPoolManager {
 
                             // don't assign a task to a client that is already on it
                             let mut in_flight_lock = cloned_in_flight.lock().unwrap();
-                            if let Some(assigned_list) = in_flight_lock.get(payload) {
-                                if assigned_list.contains_key(client) {
+                            if let Some(assigned_list) = in_flight_lock.get(payload) 
+                                && assigned_list.contains_key(client) {
                                     continue;
                                 }
-                            }
 
                             if sender.send(Ok(WorkPayload{id: *payload, payload: payloads.get(payload).unwrap().clone()})).is_err() {
                                 connections_to_drop.push(*client);

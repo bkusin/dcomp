@@ -19,5 +19,5 @@ pub fn do_work(id: u32, payload: &str, mut client: WorkerPoolClient<Channel>, cl
     // simulate more work
     std::thread::sleep(std::time::Duration::from_secs(4));
     
-    ( id, payload.chars().fold( 0, |acc, c| if c.to_ascii_lowercase() == 't' {acc + 1} else {acc}) )
+    ( id, payload.chars().fold( 0, |acc, c| if c.eq_ignore_ascii_case(&'t') {acc + 1} else {acc}) )
 }
